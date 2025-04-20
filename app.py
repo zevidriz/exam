@@ -1,22 +1,57 @@
 import streamlit as st
 import PyPDF2
 import nltk
-from transformers import pipeline
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqGeneration
 from sentence_transformers import SentenceTransformer
 import torch
 import re
 from docx import Document
 import io
+import gc
+
+# Initialize session state
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = False
+    st.session_state.model_loaded = False
+
+# Cache the model loading with memory optimization
+@st.cache_resource
+def load_models():
+    # Load question generation model
+    model_name = 'iarfmoose/t5-base-question-generator'
+    tokenizer = AutoTokenizer.from_pretrained(model_name, model_max_length=512)
+    model = AutoModelForSeq2SeqGeneration.from_pretrained(model_name, low_cpu_mem_usage=True)
+    qa_pipeline = pipeline('question-generation', model=model, tokenizer=tokenizer, device=-1)  # Force CPU
+    
+    # Load sentence transformer with memory optimization
+    sentence_model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+    
+    # Clear GPU memory if available
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Run garbage collection
+    gc.collect()
+    
+    return qa_pipeline, sentence_model
+
+# Download required NLTK data
+@st.cache_resource
+def download_nltk_data():
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        nltk.download('punkt', quiet=True)
 
 # Set page configuration
 st.set_page_config(
     page_title="PDF Exam Generator",
     page_icon="📚",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# Custom CSS
+# Custom CSS with loading animation
 st.markdown("""
 <style>
     .main {
@@ -63,19 +98,38 @@ st.markdown("""
         margin: 1rem 0;
         border-left: 5px solid #4CAF50;
     }
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.3; }
+        100% { opacity: 1; }
+    }
+    .loading {
+        animation: pulse 2s infinite;
+        text-align: center;
+        padding: 2rem;
+    }
+    .footer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: white;
+        padding: 1rem;
+        text-align: center;
+        border-top: 1px solid #eee;
+    }
+    .instructions {
+        background: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
-
 class ExamGenerator:
     def __init__(self):
-        self.qa_pipeline = pipeline('question-generation', model='iarfmoose/t5-base-question-generator')
-        self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.qa_pipeline, self.sentence_model = load_models()
         
     def extract_text_from_pdf(self, pdf_file):
         pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -163,9 +217,28 @@ class ExamGenerator:
         return doc_bytes
 
 def main():
+    # Initialize NLTK data
+    download_nltk_data()
+
     # Title section with gradient background
     st.markdown('<div class="title-container"><h1>📚 PDF Exam Generator</h1><p>Transform your PDF documents into professional exam questions instantly!</p></div>', unsafe_allow_html=True)
 
+    # Quick start guide
+    with st.expander("ℹ️ Quick Start Guide", expanded=not st.session_state.initialized):
+        st.markdown("""
+        <div class="instructions">
+        <h4>How to use this tool:</h4>
+        
+        1. 📤 Upload your PDF document using the upload button below
+        2. 🔢 Choose how many questions you want (1-10)
+        3. 🎯 Click "Generate Questions"
+        4. 📝 Review your questions and answers
+        5. 💾 Download the complete exam as a Word document
+        
+        <b>Note:</b> For best results, use PDFs with clear text (not scanned documents).
+        </div>
+        """, unsafe_allow_html=True)
+    
     # Create two columns for layout
     col1, col2 = st.columns([2, 1])
 
@@ -231,27 +304,15 @@ def main():
                 except Exception as e:
                     st.markdown(f'<div class="error-message">❌ An error occurred: {str(e)}</div>', unsafe_allow_html=True)
 
-    # Instructions section
-    st.markdown("---")
-    st.markdown("""
-    ### 🚀 How to use:
-    
-    1. **Upload Your PDF**: Click the upload button and select your study material in PDF format
-    2. **Configure**: Use the slider to select how many questions you want
-    3. **Generate**: Click the "Generate Questions" button
-    4. **Review**: Look through the generated questions and answers
-    5. **Download**: Get your exam document in Word format
-    
-    > **Note**: For best results, use PDFs with clear, well-formatted text content.
-    """)
-
     # Footer
-    st.markdown("---")
     st.markdown("""
-    <div style='text-align: center; color: #666;'>
-        Made with ❤️ by AI | PDF Exam Generator v1.0
+    <div class="footer">
+        Made with ❤️ by AI | Free to use | No sign-up required
     </div>
     """, unsafe_allow_html=True)
+    
+    # Mark as initialized
+    st.session_state.initialized = True
 
 if __name__ == "__main__":
     main() 
