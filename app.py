@@ -1,13 +1,29 @@
 import streamlit as st
-import PyPDF2
-import nltk
-from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqGeneration
-from sentence_transformers import SentenceTransformer
-import torch
-import re
-from docx import Document
 import io
-import gc
+import re
+
+# Set page configuration first
+st.set_page_config(
+    page_title="PDF Exam Generator",
+    page_icon="📚",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Show loading message
+with st.spinner("Loading required libraries... This may take a minute on first run."):
+    try:
+        import PyPDF2
+        import nltk
+        from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqGeneration
+        from sentence_transformers import SentenceTransformer
+        import torch
+        from docx import Document
+        import gc
+    except ImportError as e:
+        st.error(f"Error loading required libraries: {str(e)}")
+        st.info("Please try refreshing the page. If the error persists, contact support.")
+        st.stop()
 
 # Initialize session state
 if 'initialized' not in st.session_state:
@@ -15,41 +31,50 @@ if 'initialized' not in st.session_state:
     st.session_state.model_loaded = False
 
 # Cache the model loading with memory optimization
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_models():
-    # Load question generation model
-    model_name = 'iarfmoose/t5-base-question-generator'
-    tokenizer = AutoTokenizer.from_pretrained(model_name, model_max_length=512)
-    model = AutoModelForSeq2SeqGeneration.from_pretrained(model_name, low_cpu_mem_usage=True)
-    qa_pipeline = pipeline('question-generation', model=model, tokenizer=tokenizer, device=-1)  # Force CPU
-    
-    # Load sentence transformer with memory optimization
-    sentence_model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
-    
-    # Clear GPU memory if available
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    # Run garbage collection
-    gc.collect()
-    
-    return qa_pipeline, sentence_model
+    try:
+        # Load question generation model
+        model_name = 'iarfmoose/t5-base-question-generator'
+        tokenizer = AutoTokenizer.from_pretrained(model_name, model_max_length=512)
+        model = AutoModelForSeq2SeqGeneration.from_pretrained(
+            model_name,
+            low_cpu_mem_usage=True,
+            torch_dtype=torch.float32
+        )
+        qa_pipeline = pipeline(
+            'question-generation',
+            model=model,
+            tokenizer=tokenizer,
+            device=-1  # Force CPU
+        )
+        
+        # Load sentence transformer with memory optimization
+        sentence_model = SentenceTransformer(
+            'all-MiniLM-L6-v2',
+            device='cpu'
+        )
+        
+        # Clear GPU memory if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Run garbage collection
+        gc.collect()
+        
+        return qa_pipeline, sentence_model
+    except Exception as e:
+        st.error(f"Error loading AI models: {str(e)}")
+        return None, None
 
 # Download required NLTK data
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def download_nltk_data():
     try:
         nltk.data.find('tokenizers/punkt')
     except LookupError:
-        nltk.download('punkt', quiet=True)
-
-# Set page configuration
-st.set_page_config(
-    page_title="PDF Exam Generator",
-    page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+        with st.spinner("Downloading required language data..."):
+            nltk.download('punkt', quiet=True)
 
 # Custom CSS with loading animation
 st.markdown("""
@@ -129,16 +154,28 @@ st.markdown("""
 
 class ExamGenerator:
     def __init__(self):
-        self.qa_pipeline, self.sentence_model = load_models()
+        # Load models with error handling
+        qa_pipeline, sentence_model = load_models()
+        if qa_pipeline is None or sentence_model is None:
+            st.error("Failed to initialize AI models. Please try refreshing the page.")
+            st.stop()
+        self.qa_pipeline = qa_pipeline
+        self.sentence_model = sentence_model
         
     def extract_text_from_pdf(self, pdf_file):
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-        return text
+        try:
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+            return text
+        except Exception as e:
+            st.error(f"Error reading PDF: {str(e)}")
+            return None
     
     def preprocess_text(self, text):
+        if not text:
+            return []
         # Clean the text
         text = re.sub(r'\s+', ' ', text)
         text = text.strip()
@@ -315,4 +352,8 @@ def main():
     st.session_state.initialized = True
 
 if __name__ == "__main__":
-    main() 
+    try:
+        main()
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.info("Please try refreshing the page. If the error persists, contact support.") 
