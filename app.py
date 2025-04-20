@@ -15,7 +15,7 @@ with st.spinner("Loading required libraries... This may take a minute on first r
     try:
         import PyPDF2
         import nltk
-        from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqGeneration
+        from transformers import pipeline
         from sentence_transformers import SentenceTransformer
         import torch
         from docx import Document
@@ -34,18 +34,10 @@ if 'initialized' not in st.session_state:
 @st.cache_resource(show_spinner=False)
 def load_models():
     try:
-        # Load question generation model
-        model_name = 'iarfmoose/t5-base-question-generator'
-        tokenizer = AutoTokenizer.from_pretrained(model_name, model_max_length=512)
-        model = AutoModelForSeq2SeqGeneration.from_pretrained(
-            model_name,
-            low_cpu_mem_usage=True,
-            torch_dtype=torch.float32
-        )
+        # Load question generation model with simpler pipeline
         qa_pipeline = pipeline(
-            'question-generation',
-            model=model,
-            tokenizer=tokenizer,
+            'text2text-generation',
+            model='iarfmoose/t5-base-question-generator',
             device=-1  # Force CPU
         )
         
@@ -123,13 +115,7 @@ st.markdown("""
         margin: 1rem 0;
         border-left: 5px solid #4CAF50;
     }
-    @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.3; }
-        100% { opacity: 1; }
-    }
     .loading {
-        animation: pulse 2s infinite;
         text-align: center;
         padding: 2rem;
     }
@@ -220,10 +206,15 @@ class ExamGenerator:
         for idx in selected_indices:
             try:
                 qa_input = sentences[idx]
-                generated_questions = self.qa_pipeline(qa_input)
-                if isinstance(generated_questions, list) and generated_questions:
+                # Modified to work with text2text-generation pipeline
+                generated = self.qa_pipeline(
+                    f"generate question: {qa_input}",
+                    max_length=64,
+                    num_return_sequences=1
+                )
+                if generated and len(generated) > 0:
                     questions.append({
-                        'question': generated_questions[0]['question'],
+                        'question': generated[0]['generated_text'],
                         'answer': qa_input
                     })
             except Exception as e:
